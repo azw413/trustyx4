@@ -1,0 +1,9 @@
+baudrate = 460800
+
+[idf]
+partition_table = "xteink-xt4.csv"
+
+[flash]
+mode = "dio"
+size = "16MB"
+frequency = "80MHz"

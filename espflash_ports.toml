@@ -1,0 +1,3 @@
+[[usb_device]]
+vid = "303a"
+pid = "1001"
