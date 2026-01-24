@@ -10,7 +10,7 @@ use embedded_graphics::{
     prelude::*,
     Pixel,
 };
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 
 // SSD1677 Command Definitions
 #[allow(dead_code)]
@@ -267,7 +267,7 @@ where
     }
 
     pub fn copy_lsb(&mut self) -> Result<(), &'static str> {
-        // self.set_ram_area(0, 0, w, h)
+        self.set_ram_area(0, 0, Self::WIDTH as u16, Self::HEIGHT as u16)?;
         unsafe {
             let current_ptr = if self.active_buffer {
                 self.frame_buffer_1.as_ptr()
@@ -281,6 +281,7 @@ where
     }
 
     pub fn copy_msb(&mut self) -> Result<(), &'static str> {
+        self.set_ram_area(0, 0, Self::WIDTH as u16, Self::HEIGHT as u16)?;
         unsafe {
             let current_ptr = if self.active_buffer {
                 self.frame_buffer_1.as_ptr()
@@ -291,6 +292,13 @@ where
 
             self.write_ram_buffer(commands::WRITE_RAM_RED, current_slice)
         }
+    }
+
+    pub fn copy_grayscale_buffers(&mut self, lsb: &[u8], msb: &[u8]) -> Result<(), &'static str> {
+        self.set_ram_area(0, 0, Self::WIDTH as u16, Self::HEIGHT as u16)?;
+        self.write_ram_buffer(commands::WRITE_RAM_BW, lsb)?;
+        self.write_ram_buffer(commands::WRITE_RAM_RED, msb)?;
+        Ok(())
     }
 
     /// Display the current frame buffer
@@ -378,9 +386,7 @@ where
         self.send_data(&[lut[105]])?;
 
         self.send_command(commands::SOURCE_VOLTAGE)?;
-        self.send_data(&[lut[106]])?;
-        self.send_data(&[lut[107]])?;
-        self.send_data(&[lut[108]])?;
+        self.send_data(&[lut[106], lut[107], lut[108]])?;
 
         self.send_command(commands::WRITE_VCOM)?;
         self.send_data(&[lut[109]])?;
@@ -532,7 +538,6 @@ where
     }
 
     fn write_ram_buffer(&mut self, ram_buffer: u8, data: &[u8]) -> Result<(), &'static str> {
-        self.set_ram_area(0, 0, Self::WIDTH as u16, Self::HEIGHT as u16)?;
         let buffer_name = if ram_buffer == commands::WRITE_RAM_BW { "BW" } else { "RED" };
         info!("Writing frame buffer to {} RAM ({} bytes)", buffer_name, data.len());
 

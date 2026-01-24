@@ -9,6 +9,7 @@
 
 pub mod eink_display;
 pub mod input;
+mod test_image;
 
 use crate::eink_display::{EInkDisplay, RefreshMode, Rotation};
 use crate::input::*;
@@ -132,90 +133,86 @@ fn main() -> ! {
         info!("Setting rotation to {:?}", new_rotation);
         display.set_rotation(new_rotation);
 
-        if let Err(e) = update_display(&mut display) {
+        if let Err(e) = display_image(&mut display) {
             error!("Error updating display: {}", e);
         }
+
+        // if let Err(e) = update_display(&mut display) {
+        //     error!("Error updating display: {}", e);
+        // }
 
         dirty = false;
     }
 }
 
+fn display_image(
+    display: &mut EInkDisplay<'_, Spi<'_, Blocking>, Output<'_>, Output<'_>, Output<'_>, Input<'_>>,
+) -> Result<(), &'static str> {
+    display.frame_buffer().copy_from_slice(&test_image::test_image);
+    display.display_buffer(RefreshMode::Fast)?;
+    display.copy_grayscale_buffers(&test_image::test_image_lsb, &test_image::test_image_msb)?;
+    display.display_gray_buffer(false)?;
+    Ok(())
+}
+
 fn update_display(display: &mut EInkDisplay<'_, Spi<'_, Blocking>, Output<'_>, Output<'_>, Output<'_>, Input<'_>>)
     -> Result<(), &'static str> {
     // Clear and redraw with new rotation
-    display.clear(BinaryColor::Off).ok();
+    // display.clear_screen(0xFF);
     
-    // Get the current display size (changes with rotation)
-    let size = display.size() - Size::new(22, 22);
+    // // Get the current display size (changes with rotation)
+    // let size = display.size() - Size::new(22, 22);
     
-    // Draw a border rectangle that fits the rotated display
-    Rectangle::new(Point::new(10, 10), size)
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
-        .draw(display)
-        .ok();
+    // // Draw a border rectangle that fits the rotated display
+    // Rectangle::new(Point::new(10, 10), size)
+    //     .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
+    //     .draw(display)
+    //     .ok();
 
-    // Draw some circles
-    Circle::new(Point::new(100, 100), 80)
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 3))
-        .draw(display)
-        .ok();
+    // // Draw some circles
+    // Circle::new(Point::new(100, 100), 80)
+    //     .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 3))
+    //     .draw(display)
+    //     .ok();
 
-    Circle::new(Point::new(200, 100), 60)
-        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
-        .draw(display)
-        .ok();
+    // Circle::new(Point::new(200, 100), 60)
+    //     .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+    //     .draw(display)
+    //     .ok();
 
-    // Draw text
-    let text_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-    Text::new("Hello from rust", Point::new(20, 30), text_style)
-        .draw(display)
-        .ok();
+    // // Draw text
+    // let text_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+    // Text::new("Hello from rust", Point::new(20, 30), text_style)
+    //     .draw(display)
+    //     .ok();
 
-    let line_width = display.size().width as i32 - 202;
+    // let line_width = display.size().width as i32 - 202;
 
-    // Black
-    Line::new(Point::new(100, 100), Point::new(line_width, 100))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
-        .draw(display)
-        .ok();
+    // // Black
+    // Line::new(Point::new(100, 100), Point::new(line_width, 100))
+    //     .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
+    //     .draw(display)
+    //     .ok();
+
+    display.clear_screen(0xFF);
 
     display.display_buffer(RefreshMode::Fast)?;
 
-    display.clear(BinaryColor::Off).ok();
-    // Dark Gray
-    Line::new(Point::new(100, 200), Point::new(line_width, 200))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
-        .draw(display)
-        .ok();
+    display.clear_screen(0x00);
 
-    // Gray
-    Line::new(Point::new(100, 300), Point::new(line_width, 300))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
-        .draw(display)
-        .ok();
+    display.frame_buffer()[..EINK_BUFFER_SIZE / 4].fill(0xFF);
+    display.frame_buffer()[EINK_BUFFER_SIZE / 4..EINK_BUFFER_SIZE / 2].fill(0xFF);
 
-    // unsafe {
-    //     let fb = display.frame_buffer();
-    //     display.copy_msb(fb).ok();
-    // };
     display.copy_lsb()?;
 
-    display.clear(BinaryColor::Off).ok();
-    // Dark Gray
-    Line::new(Point::new(100, 200), Point::new(line_width, 200))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
-        .draw(display)
-        .ok();
+    display.clear_screen(0x00);
 
-    // Light Gray
-    Line::new(Point::new(100, 400), Point::new(line_width, 400))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 2))
-        .draw(display)
-        .ok();
+    display.frame_buffer()[EINK_BUFFER_SIZE / 4..EINK_BUFFER_SIZE / 2].fill(0xFF);
+    display.frame_buffer()[EINK_BUFFER_SIZE / 2..3 * EINK_BUFFER_SIZE / 4].fill(0xFF);
 
     display.copy_msb()?;
 
-    display.display_gray_buffer(false)?;
+    display.display_gray_buffer(true)?;
 
     Ok(())
 }
