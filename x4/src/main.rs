@@ -32,9 +32,9 @@ use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx};
 use log::info;
-use microreader_core::application::Application;
-use microreader_core::display::{Display, RefreshMode};
-use microreader_core::framebuffer::DisplayBuffers;
+use trusty_core::application::Application;
+use trusty_core::display::{Display, RefreshMode};
+use trusty_core::framebuffer::DisplayBuffers;
 
 extern crate alloc;
 const MAX_BUFFER_SIZE: usize = 512;

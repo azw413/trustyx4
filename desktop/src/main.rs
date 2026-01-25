@@ -1,4 +1,4 @@
-use microreader_core::{
+use trusty_core::{
     application::Application,
     display::{HEIGHT, WIDTH},
     framebuffer::DisplayBuffers,
@@ -11,7 +11,7 @@ mod display;
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    log::info!("Microreader desktop application started");
+    log::info!("Trusty desktop application started");
 
     let options = minifb::WindowOptions {
         borderless: false,
@@ -21,7 +21,7 @@ fn main() {
         ..minifb::WindowOptions::default()
     };
     let mut window = minifb::Window::new(
-        "Microreader Desktop",
+        "Trusty Desktop",
         // swapped
         WIDTH,
         HEIGHT,

@@ -1,5 +1,5 @@
 use log::info;
-use microreader_core::{
+use trusty_core::{
     display::{HEIGHT, RefreshMode, WIDTH},
     framebuffer::DisplayBuffers,
     input::{ButtonState, Buttons},
@@ -166,7 +166,7 @@ impl MinifbDisplay {
     }
 }
 
-impl microreader_core::display::Display for MinifbDisplay {
+impl trusty_core::display::Display for MinifbDisplay {
     fn display(&mut self, buffers: &mut DisplayBuffers, mode: RefreshMode) {
         // revert grayscale first
         if self.is_grayscale {

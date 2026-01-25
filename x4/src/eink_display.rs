@@ -4,13 +4,13 @@
 //! optimized for the GDEQ0426T82 4.26" 800x480 e-paper display.
 //! https://github.com/CidVonHighwind/microreader/
 
-use embedded_hal::spi::{SpiBus, SpiDevice};
+use embedded_hal::spi::SpiDevice;
 use esp_hal::{
     delay::Delay,
     gpio::{Input, Output},
 };
 use log::{error, info, warn};
-use microreader_core::{
+use trusty_core::{
     display::{Display, RefreshMode},
     framebuffer::{BUFFER_SIZE, DisplayBuffers},
 };

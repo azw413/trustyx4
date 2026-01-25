@@ -1288,48 +1288,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
 
 [[package]]
-name = "microreader-desktop"
-version = "0.1.0"
-dependencies = [
- "embedded-graphics",
- "env_logger",
- "log",
- "microreader_core",
- "minifb",
-]
-
-[[package]]
-name = "microreader-x4"
-version = "0.1.0"
-dependencies = [
- "embassy-executor",
- "embassy-sync 0.7.2",
- "embassy-time",
- "embedded-graphics",
- "embedded-hal 1.0.0",
- "embedded-hal-bus",
- "embedded-io-async 0.7.0",
- "embedded-sdmmc",
- "esp-alloc",
- "esp-backtrace",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-rtos",
- "log",
- "microreader_core",
- "nb 1.1.0",
- "static_cell",
-]
-
-[[package]]
-name = "microreader_core"
-version = "0.1.0"
-dependencies = [
- "embedded-graphics",
-]
-
-[[package]]
 name = "minifb"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1886,6 +1844,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3198b4b0a8e11f09dd03e133c0280504d0801269e9afa46362ffde1cbeebf44"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "trusty-desktop"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "env_logger",
+ "log",
+ "minifb",
+ "trusty_core",
+]
+
+[[package]]
+name = "trusty-x4"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
+ "embedded-sdmmc",
+ "esp-alloc",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-rtos",
+ "log",
+ "nb 1.1.0",
+ "static_cell",
+ "trusty_core",
+]
+
+[[package]]
+name = "trusty_core"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
 ]
 
 [[package]]

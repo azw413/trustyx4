@@ -1,5 +1,5 @@
 [package]
-name = "microreader_core"
+name = "trusty_core"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
