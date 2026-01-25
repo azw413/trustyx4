@@ -12,12 +12,15 @@ fn main() {
 
     log::info!("Microreader desktop application started");
 
+    let mut options = minifb::WindowOptions::default();
+    options.resize = true;
+    options.scale = minifb::Scale::X2;
     let mut window = minifb::Window::new(
         "Microreader Desktop",
         // swapped
         WIDTH as usize,
         HEIGHT as usize,
-        minifb::WindowOptions::default(),
+        options,
     )
     .unwrap_or_else(|e| {
         panic!("Unable to open window: {}", e);

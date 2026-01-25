@@ -14,9 +14,5 @@ ESP_LOG="info"
 ESPFLASH_BAUD="921600"
 MONITOR_BAUD="115200"
 
-[build]
-
-# target = "riscv32imc-unknown-none-elf"
-
 # [unstable]
 # build-std = ["alloc", "core"]
