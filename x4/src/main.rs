@@ -10,12 +10,16 @@
 pub mod eink_display;
 pub mod input;
 
+use core::cell::RefCell;
+
 use crate::eink_display::EInkDisplay;
 use crate::input::*;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use embedded_hal_bus::spi::RefCellDevice;
+use embedded_sdmmc::{LfnBuffer, SdCard, VolumeIdx, VolumeManager};
 use esp_backtrace as _;
 use esp_hal::Async;
 use esp_hal::clock::CpuClock;
@@ -39,11 +43,30 @@ const MAX_BUFFER_SIZE: usize = 512;
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
-fn handle_cmd(command: &[u8]) {
-    info!(
-        "Handling command: {}",
-        core::str::from_utf8(command).unwrap()
-    );
+fn log_heap() {
+    let stats = esp_alloc::HEAP.stats();
+    info!("{stats}");
+}
+
+fn handle_cmd(input_bytes: &[u8]) {
+    let Ok(input) = core::str::from_utf8(input_bytes).map(|cmd| cmd.trim()) else {
+        return;
+    };
+    info!("Handling command: {input}");
+    let parts = input.split_whitespace();
+    let command = parts.into_iter().next().unwrap_or("");
+    if command.eq_ignore_ascii_case("ls") {
+        /* ... */
+    } else if command.eq_ignore_ascii_case("heap") {
+        log_heap();
+    } else if command.eq_ignore_ascii_case("help") {
+        info!("Available commands:");
+        info!("  ls   - List files (not implemented)");
+        info!("  heap - Show heap usage statistics");
+        info!("  help - Show this help message");
+    } else {
+        info!("Unknown command: {}", command);
+    }
 }
 
 #[embassy_executor::task]
@@ -84,7 +107,7 @@ async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 0x10000);
-    esp_alloc::heap_allocator!(size: 310000);
+    esp_alloc::heap_allocator!(size: 300000);
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -96,27 +119,31 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(reader(rx)).unwrap();
 
-    let stats = esp_alloc::HEAP.stats();
     info!("Heap initialized");
-    info!("Size: {} bytes", stats.size);
-    info!("Used: {} bytes", stats.current_usage);
+    log_heap();
 
-    info!("Setting up GPIO pins");
-    let cs = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
-    let dc = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
-    let busy = Input::new(peripherals.GPIO6, InputConfig::default());
-    let rst = Output::new(peripherals.GPIO5, Level::High, OutputConfig::default());
+    let delay = Delay::new();
 
-    info!("Initializing SPI for E-Ink Display");
+    // Initialize shared SPI bus
     let spi_cfg = Config::default()
         .with_frequency(Rate::from_mhz(40))
         .with_mode(Mode::_0);
     let spi = Spi::new(peripherals.SPI2, spi_cfg)
         .expect("Failed to create SPI")
         .with_sck(peripherals.GPIO8)
-        .with_mosi(peripherals.GPIO10);
+        .with_mosi(peripherals.GPIO10)
+        .with_miso(peripherals.GPIO7);
+    let shared_spi = RefCell::new(spi);
 
-    let delay = Delay::new();
+    info!("Setting up GPIO pins");
+    let dc = Output::new(peripherals.GPIO4, Level::High, OutputConfig::default());
+    let busy = Input::new(peripherals.GPIO6, InputConfig::default());
+    let rst = Output::new(peripherals.GPIO5, Level::High, OutputConfig::default());
+
+    info!("Initializing SPI for E-Ink Display");
+    let eink_cs = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
+    let eink_spi_device = RefCellDevice::new(&shared_spi, eink_cs, delay.clone())
+        .expect("Failed to create SPI device");
 
     info!("SPI initialized");
 
@@ -124,7 +151,7 @@ async fn main(spawner: Spawner) {
 
     // Create E-Ink Display instance
     info!("Creating E-Ink Display driver");
-    let mut display = EInkDisplay::new(spi, cs, dc, rst, busy, delay);
+    let mut display = EInkDisplay::new(eink_spi_device, dc, rst, busy, delay);
 
     // Initialize the display
     display.begin().expect("Failed to initialize display");
@@ -140,6 +167,47 @@ async fn main(spawner: Spawner) {
         peripherals.ADC1,
     );
 
+    let eink_cs = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
+    let sdcard_spi = RefCellDevice::new(&shared_spi, eink_cs, delay.clone())
+        .expect("Failed to create SPI device for SD card");
+
+    let sdcard = SdCard::new(sdcard_spi, delay.clone());
+    info!("SD Card initialized");
+    if let Ok(size) = sdcard.num_bytes() {
+        info!("SD Card Size: {} bytes", size);
+    }
+
+    // Open volume 0 (main partition)
+    let volume_mgr = VolumeManager::new(sdcard, DummyTimeSource);
+    let volume0 = volume_mgr.open_volume(VolumeIdx(0));
+
+    // Open root directory
+    let root_dir = if let Ok(ref volume) = volume0 {
+        info!("Volume 0 opened");
+        volume.open_root_dir().ok()
+    } else {
+        None
+    };
+
+    // After initializing the SD card, increase the SPI frequency
+    shared_spi
+        .borrow_mut()
+        .apply_config(
+            &Config::default()
+                .with_frequency(Rate::from_mhz(2))
+                .with_mode(Mode::_0),
+        )
+        .expect("Failed to apply the second SPI configuration");
+    if let Some(root_dir) = root_dir {
+        info!("Root directory opened");
+        // List files in root directory
+        let mut buffer = [0u8; 255];
+        let mut lfn = LfnBuffer::new(&mut buffer);
+        root_dir.iterate_dir_lfn(&mut lfn, |f, name| {
+            info!("Found dir entry: {:?} ({} bytes, directory: {})", name, f.size, f.attributes.is_directory());
+        }).ok();
+    }
+
     info!("Display complete! Starting rotation demo...");
 
     loop {
@@ -149,5 +217,21 @@ async fn main(spawner: Spawner) {
         let buttons = button_state.get_buttons();
         application.update(&buttons);
         application.draw(&mut display);
+    }
+}
+
+/// Dummy time source for embedded-sdmmc (use RTC for real timestamps)
+pub struct DummyTimeSource;
+
+impl embedded_sdmmc::TimeSource for DummyTimeSource {
+    fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
+        embedded_sdmmc::Timestamp {
+            year_since_1970: 0,
+            zero_indexed_month: 0,
+            zero_indexed_day: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+        }
     }
 }

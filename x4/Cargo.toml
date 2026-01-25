@@ -8,17 +8,17 @@ version.workspace = true
 log.workspace = true
 microreader_core = { path = "../core" }
 
-esp-hal = { version = "~1.0", features = ["esp32c3", "log-04", "unstable"] }
-
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32c3", "log-04"] }
-
-esp-alloc = "0.9.0"
-esp-backtrace = { version = "0.18.1", features = [
+# In 1.0.0 GPIO Pins 12-17 aren't exposed
+esp-hal = { git = "https://github.com/esp-rs/esp-hal", features = ["esp32c3", "log-04", "unstable"] }
+esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", features = ["esp32c3", "log-04"] }
+esp-rtos = { git = "https://github.com/esp-rs/esp-hal", features = ["alloc", "embassy", "esp-radio", "esp32c3", "log-04"] }
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal", features = ["internal-heap-stats"] }
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", features = [
   "esp32c3",
   "panic-handler",
   "println",
 ] }
-esp-println = { version = "0.16.1", features = ["esp32c3", "log-04"] }
+esp-println = { git = "https://github.com/esp-rs/esp-hal", features = ["esp32c3", "log-04"] }
 embedded-graphics.workspace = true
 embedded-hal = "1.0.0"
 embedded-hal-bus = "0.3.0"
@@ -26,6 +26,6 @@ nb = "1.1.0"
 embassy-executor = "0.9.1"
 embassy-sync = "0.7.2"
 embedded-io-async = { version = "0.7.0", features = ["alloc"] }
-esp-rtos = { version = "0.2.0", features = ["alloc", "embassy", "esp-radio", "esp32c3", "log-04"] }
 static_cell = "2.1.1"
 embassy-time = "0.5.0"
+embedded-sdmmc = "0.9.0"

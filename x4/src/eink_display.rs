@@ -4,12 +4,10 @@
 //! optimized for the GDEQ0426T82 4.26" 800x480 e-paper display.
 //! https://github.com/CidVonHighwind/microreader/
 
-use embedded_hal::spi::SpiBus;
+use embedded_hal::spi::{SpiBus, SpiDevice};
 use esp_hal::{
-    Blocking,
     delay::Delay,
     gpio::{Input, Output},
-    spi::{Error as SpiError, master::Spi},
 };
 use log::{error, info, warn};
 use microreader_core::{
@@ -114,9 +112,8 @@ const LUT_GRAYSCALE_REVERT: &[u8] = &[
 ];
 
 /// E-Ink Display driver for SSD1677
-pub struct EInkDisplay<'gpio> {
-    spi: Spi<'gpio, Blocking>,
-    cs: Output<'gpio>,
+pub struct EInkDisplay<'gpio, SPI> {
+    spi: SPI,
     dc: Output<'gpio>,
     rst: Output<'gpio>,
     busy: Input<'gpio>,
@@ -126,7 +123,7 @@ pub struct EInkDisplay<'gpio> {
     in_grayscale_mode: bool,
 }
 
-impl<'gpio> EInkDisplay<'gpio> {
+impl<'gpio, SPI> EInkDisplay<'gpio, SPI> where SPI: SpiDevice {
     /// Display dimensions
     pub const WIDTH: usize = 800;
     pub const HEIGHT: usize = 480;
@@ -135,8 +132,7 @@ impl<'gpio> EInkDisplay<'gpio> {
 
     /// Create a new EInkDisplay instance
     pub fn new(
-        spi: Spi<'gpio, Blocking>,
-        cs: Output<'gpio>,
+        spi: SPI,
         dc: Output<'gpio>,
         rst: Output<'gpio>,
         busy: Input<'gpio>,
@@ -144,7 +140,6 @@ impl<'gpio> EInkDisplay<'gpio> {
     ) -> Self {
         Self {
             spi,
-            cs,
             dc,
             rst,
             busy,
@@ -156,7 +151,7 @@ impl<'gpio> EInkDisplay<'gpio> {
     }
 
     /// Initialize the display
-    pub fn begin(&mut self) -> Result<(), SpiError> {
+    pub fn begin(&mut self) -> Result<(), SPI::Error> {
         info!("Initializing E-Ink Display");
 
         // Reset display
@@ -169,7 +164,7 @@ impl<'gpio> EInkDisplay<'gpio> {
         Ok(())
     }
 
-    pub fn display_gray_buffer(&mut self, turn_off_screen: bool) -> Result<(), SpiError> {
+    pub fn display_gray_buffer(&mut self, turn_off_screen: bool) -> Result<(), SPI::Error> {
         warn!("Displaying grayscale buffer");
         self.in_grayscale_mode = true;
         self.set_custom_lut(LUT_GRAYSCALE)?;
@@ -178,7 +173,7 @@ impl<'gpio> EInkDisplay<'gpio> {
         Ok(())
     }
 
-    fn grayscale_revert_internal(&mut self) -> Result<(), SpiError> {
+    fn grayscale_revert_internal(&mut self) -> Result<(), SPI::Error> {
         warn!("Reverting grayscale buffer");
         self.in_grayscale_mode = false;
         self.set_custom_lut(LUT_GRAYSCALE_REVERT)?;
@@ -187,7 +182,7 @@ impl<'gpio> EInkDisplay<'gpio> {
         Ok(())
     }
 
-    fn set_custom_lut(&mut self, lut: &[u8]) -> Result<(), SpiError> {
+    fn set_custom_lut(&mut self, lut: &[u8]) -> Result<(), SPI::Error> {
         info!("Setting custom LUT");
 
         self.send_command(commands::WRITE_LUT)?;
@@ -207,7 +202,7 @@ impl<'gpio> EInkDisplay<'gpio> {
     }
 
     /// Enter deep sleep mode
-    pub fn deep_sleep(&mut self) -> Result<(), SpiError> {
+    pub fn deep_sleep(&mut self) -> Result<(), SPI::Error> {
         info!("Entering deep sleep mode");
         self.send_command(commands::DEEP_SLEEP)?;
         self.send_data(&[0x01])?;
@@ -229,21 +224,15 @@ impl<'gpio> EInkDisplay<'gpio> {
         info!("Display reset complete");
     }
 
-    fn send_command(&mut self, command: u8) -> Result<(), SpiError> {
+    fn send_command(&mut self, command: u8) -> Result<(), SPI::Error> {
         let _ = self.dc.set_low(); // Command mode
-        let _ = self.cs.set_low();
         self.spi.write(&[command])?;
-        self.spi.flush()?;
-        let _ = self.cs.set_high();
         Ok(())
     }
 
-    fn send_data(&mut self, data: &[u8]) -> Result<(), SpiError> {
+    fn send_data(&mut self, data: &[u8]) -> Result<(), SPI::Error> {
         let _ = self.dc.set_high(); // Data mode
-        let _ = self.cs.set_low();
         self.spi.write(data)?;
-        self.spi.flush()?;
-        let _ = self.cs.set_high();
         Ok(())
     }
 
@@ -260,7 +249,7 @@ impl<'gpio> EInkDisplay<'gpio> {
         info!("Wait complete: {} ({} ms)", comment, iterations);
     }
 
-    fn init_display_controller(&mut self) -> Result<(), SpiError> {
+    fn init_display_controller(&mut self) -> Result<(), SPI::Error> {
         info!("Initializing SSD1677 controller");
 
         // Soft reset
@@ -305,7 +294,7 @@ impl<'gpio> EInkDisplay<'gpio> {
         Ok(())
     }
 
-    fn set_ram_area(&mut self, x: u16, y: u16, w: u16, h: u16) -> Result<(), SpiError> {
+    fn set_ram_area(&mut self, x: u16, y: u16, w: u16, h: u16) -> Result<(), SPI::Error> {
         // Reverse Y coordinate (gates are reversed on this display)
         let y = Self::HEIGHT as u16 - y - h;
 
@@ -348,7 +337,7 @@ impl<'gpio> EInkDisplay<'gpio> {
         Ok(())
     }
 
-    fn write_ram_buffer(&mut self, ram_buffer: u8, data: &[u8]) -> Result<(), SpiError> {
+    fn write_ram_buffer(&mut self, ram_buffer: u8, data: &[u8]) -> Result<(), SPI::Error> {
         let buffer_name = if ram_buffer == commands::WRITE_RAM_BW {
             "BW"
         } else {
@@ -376,7 +365,7 @@ impl<'gpio> EInkDisplay<'gpio> {
         &mut self,
         mode: RefreshMode,
         turn_off_screen: bool,
-    ) -> Result<(), SpiError> {
+    ) -> Result<(), SPI::Error> {
         // Configure Display Update Control 1
         self.send_command(commands::DISPLAY_UPDATE_CTRL1)?;
         let ctrl1 = match mode {
@@ -439,7 +428,7 @@ impl<'gpio> EInkDisplay<'gpio> {
     }
 }
 
-impl Display for EInkDisplay<'_> {
+impl<SPI> Display for EInkDisplay<'_, SPI> where SPI: SpiDevice  {
     fn display(&mut self, buffers: &mut DisplayBuffers, mut mode: RefreshMode) {
         if !self.is_screen_on {
             // Force half refresh if screen is off
