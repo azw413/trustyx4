@@ -7,8 +7,7 @@ use embedded_graphics::{
     Drawable,
     mono_font::{MonoTextStyle, ascii::FONT_10X20},
     pixelcolor::BinaryColor,
-    prelude::{DrawTarget, OriginDimensions, Point, Primitive, Size},
-    primitives::{PrimitiveStyle, Rectangle},
+    prelude::{DrawTarget, OriginDimensions, Point},
     text::Text,
 };
 
@@ -17,6 +16,7 @@ use crate::{
     framebuffer::{DisplayBuffers, Rotation},
     image_viewer::{ImageData, ImageEntry, ImageError, ImageSource},
     input,
+    ui::{ListItem, ListView, Rect, RenderQueue, UiContext, View},
 };
 
 const LIST_TOP: i32 = 60;
@@ -193,59 +193,31 @@ impl<'a, S: ImageSource> Application<'a, S> {
     }
 
     fn draw_menu(&mut self, display: &mut impl crate::display::Display) {
-        self.display_buffers.clear(BinaryColor::On).ok();
+        let items: Vec<ListItem<'_>> = self
+            .images
+            .iter()
+            .map(|entry| ListItem {
+                label: entry.name.as_str(),
+            })
+            .collect();
 
-        let header_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::Off);
-        Text::new("Image Viewer", Point::new(LIST_MARGIN_X, HEADER_Y), header_style)
-            .draw(self.display_buffers)
-            .ok();
+        let mut list = ListView::new(&items);
+        list.title = Some("Image Viewer");
+        list.footer = Some("Up/Down: select  Confirm: view  Back: refresh");
+        list.empty_label = Some("No images found in /images");
+        list.selected = self.selected;
+        list.margin_x = LIST_MARGIN_X;
+        list.header_y = HEADER_Y;
+        list.list_top = LIST_TOP;
+        list.line_height = LINE_HEIGHT;
 
-        let footer_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::Off);
-        Text::new(
-            "Up/Down: select  Confirm: view  Back: refresh",
-            Point::new(LIST_MARGIN_X, (self.display_buffers.size().height as i32) - 16),
-            footer_style,
-        )
-        .draw(self.display_buffers)
-        .ok();
-
-        if self.images.is_empty() {
-            Text::new(
-                "No images found in /images",
-                Point::new(LIST_MARGIN_X, LIST_TOP),
-                header_style,
-            )
-            .draw(self.display_buffers)
-            .ok();
-        } else {
-            let max_lines = ((self.display_buffers.size().height as i32 - LIST_TOP - 40)
-                / LINE_HEIGHT)
-                .max(1) as usize;
-            let start = self.selected.saturating_sub(max_lines / 2);
-            let end = (start + max_lines).min(self.images.len());
-
-            for (idx, entry) in self.images[start..end].iter().enumerate() {
-                let actual_idx = start + idx;
-                let y = LIST_TOP + (idx as i32 * LINE_HEIGHT);
-                if actual_idx == self.selected {
-                    Rectangle::new(
-                        Point::new(0, y - 18),
-                        Size::new(self.display_buffers.size().width, LINE_HEIGHT as u32),
-                    )
-                    .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
-                    .draw(self.display_buffers)
-                    .ok();
-                    let selected_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-                    Text::new(&entry.name, Point::new(LIST_MARGIN_X, y), selected_style)
-                        .draw(self.display_buffers)
-                        .ok();
-                } else {
-                    Text::new(&entry.name, Point::new(LIST_MARGIN_X, y), header_style)
-                        .draw(self.display_buffers)
-                        .ok();
-                }
-            }
-        }
+        let size = self.display_buffers.size();
+        let rect = Rect::new(0, 0, size.width as i32, size.height as i32);
+        let mut rq = RenderQueue::default();
+        let mut ctx = UiContext {
+            buffers: self.display_buffers,
+        };
+        list.render(&mut ctx, rect, &mut rq);
 
         display.display(
             self.display_buffers,
