@@ -14,7 +14,7 @@ use embedded_graphics::{
 use crate::{
     display::RefreshMode,
     framebuffer::{DisplayBuffers, Rotation, HEIGHT as FB_HEIGHT, WIDTH as FB_WIDTH},
-    image_viewer::{ImageData, ImageEntry, ImageError, ImageSource},
+    image_viewer::{EntryKind, ImageData, ImageEntry, ImageError, ImageSource},
     input,
     ui::{flush_queue, ListItem, ListView, ReaderView, Rect, RenderQueue, UiContext, View},
 };
@@ -28,7 +28,7 @@ pub struct Application<'a, S: ImageSource> {
     dirty: bool,
     display_buffers: &'a mut DisplayBuffers,
     source: &'a mut S,
-    images: Vec<ImageEntry>,
+    entries: Vec<ImageEntry>,
     selected: usize,
     state: AppState,
     current_image: Option<ImageData>,
@@ -42,6 +42,7 @@ pub struct Application<'a, S: ImageSource> {
     sleep_overlay_pending: bool,
     wake_restore_only: bool,
     resume_name: Option<String>,
+    path: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,7 +61,7 @@ impl<'a, S: ImageSource> Application<'a, S> {
             dirty: true,
             display_buffers,
             source,
-            images: Vec::new(),
+            entries: Vec::new(),
             selected: 0,
             state: AppState::Menu,
             current_image: None,
@@ -74,8 +75,9 @@ impl<'a, S: ImageSource> Application<'a, S> {
             sleep_overlay_pending: false,
             wake_restore_only: false,
             resume_name,
+            path: Vec::new(),
         };
-        app.refresh_images();
+        app.refresh_entries();
         app.try_resume();
         app
     }
@@ -101,7 +103,7 @@ impl<'a, S: ImageSource> Application<'a, S> {
             self.dirty = true;
             self.idle_ms = 0;
             if !resumed_viewer {
-                self.refresh_images();
+                self.refresh_entries();
             }
             return;
         }
@@ -113,30 +115,35 @@ impl<'a, S: ImageSource> Application<'a, S> {
         match self.state {
             AppState::Menu => {
                 if buttons.is_pressed(input::Buttons::Up) {
-                    if !self.images.is_empty() {
+                    if !self.entries.is_empty() {
                         self.selected = self.selected.saturating_sub(1);
                     }
                     self.dirty = true;
                 } else if buttons.is_pressed(input::Buttons::Down) {
-                    if !self.images.is_empty() {
-                        self.selected = (self.selected + 1).min(self.images.len() - 1);
+                    if !self.entries.is_empty() {
+                        self.selected = (self.selected + 1).min(self.entries.len() - 1);
                     }
                     self.dirty = true;
                 } else if buttons.is_pressed(input::Buttons::Confirm) {
                     self.open_selected();
                 } else if buttons.is_pressed(input::Buttons::Back) {
-                    self.refresh_images();
+                    if !self.path.is_empty() {
+                        self.path.pop();
+                        self.refresh_entries();
+                    } else {
+                        self.refresh_entries();
+                    }
                 }
             }
             AppState::Viewing => {
                 if buttons.is_pressed(input::Buttons::Left) {
-                    if !self.images.is_empty() {
+                    if !self.entries.is_empty() {
                         let next = self.selected.saturating_sub(1);
                         self.open_index(next);
                     }
                 } else if buttons.is_pressed(input::Buttons::Right) {
-                    if !self.images.is_empty() {
-                        let next = (self.selected + 1).min(self.images.len() - 1);
+                    if !self.entries.is_empty() {
+                        let next = (self.selected + 1).min(self.entries.len() - 1);
                         self.open_index(next);
                     }
                 } else if buttons.is_pressed(input::Buttons::Back)
@@ -148,9 +155,8 @@ impl<'a, S: ImageSource> Application<'a, S> {
                 } else {
                     self.idle_ms = self.idle_ms.saturating_add(elapsed_ms);
                     if self.idle_ms >= self.idle_timeout_ms {
-                        let resume = self.current_entry_name().map(|name| name.to_string());
-                        if let Some(name) = resume.as_deref() {
-                            self.source.save_resume(Some(name));
+                        if let Some(name) = self.current_entry_name_owned() {
+                            self.source.save_resume(Some(name.as_str()));
                         }
                         self.state = AppState::Sleeping;
                         self.sleep_transition = true;
@@ -213,64 +219,87 @@ impl<'a, S: ImageSource> Application<'a, S> {
     }
 
     fn open_selected(&mut self) {
-        if self.images.is_empty() {
-            self.error_message = Some("No images found in /images.".into());
+        if self.entries.is_empty() {
+            self.error_message = Some("No entries found in /images.".into());
             self.state = AppState::Error;
             self.dirty = true;
             return;
         }
-        if let Some(entry) = self.images.get(self.selected).cloned() {
-            match self.source.load(&entry) {
-                Ok(image) => {
-                    self.current_image = Some(image);
-                    self.state = AppState::Viewing;
-                    self.full_refresh = true;
-                    self.dirty = true;
-                    self.idle_ms = 0;
-                    self.sleep_overlay = None;
-                    self.sleep_overlay_pending = false;
-                    let resume = self.current_entry_name().map(|name| name.to_string());
-                    if let Some(name) = resume.as_deref() {
-                        self.source.save_resume(Some(name));
-                    }
+        let Some(entry) = self.entries.get(self.selected).cloned() else {
+            return;
+        };
+        match entry.kind {
+            EntryKind::Dir => {
+                self.path.push(entry.name);
+                self.refresh_entries();
+            }
+            EntryKind::File => {
+                if is_epub(&entry.name) {
+                    self.set_error(ImageError::Message(
+                        "EPUB support is not implemented yet.".into(),
+                    ));
+                    return;
                 }
-                Err(err) => self.set_error(err),
+                match self.source.load(&self.path, &entry) {
+                    Ok(image) => {
+                        self.current_image = Some(image);
+                        self.state = AppState::Viewing;
+                        self.full_refresh = true;
+                        self.dirty = true;
+                        self.idle_ms = 0;
+                        self.sleep_overlay = None;
+                        self.sleep_overlay_pending = false;
+                        if let Some(name) = self.current_entry_name_owned() {
+                            self.source.save_resume(Some(name.as_str()));
+                        }
+                    }
+                    Err(err) => self.set_error(err),
+                }
             }
         }
     }
 
     fn open_index(&mut self, index: usize) {
-        if self.images.is_empty() {
+        if self.entries.is_empty() {
             return;
         }
-        let index = index.min(self.images.len().saturating_sub(1));
-        if let Some(entry) = self.images.get(index).cloned() {
-            match self.source.load(&entry) {
-                Ok(image) => {
-                    self.selected = index;
-                    self.current_image = Some(image);
-                    self.state = AppState::Viewing;
-                    self.full_refresh = true;
-                    self.dirty = true;
-                    self.idle_ms = 0;
-                    self.sleep_overlay = None;
-                    self.sleep_overlay_pending = false;
-                    let resume = self.current_entry_name().map(|name| name.to_string());
-                    if let Some(name) = resume.as_deref() {
-                        self.source.save_resume(Some(name));
-                    }
+        let index = index.min(self.entries.len().saturating_sub(1));
+        let Some(entry) = self.entries.get(index).cloned() else {
+            return;
+        };
+        if entry.kind != EntryKind::File {
+            return;
+        }
+        if is_epub(&entry.name) {
+            self.set_error(ImageError::Message(
+                "EPUB support is not implemented yet.".into(),
+            ));
+            return;
+        }
+        match self.source.load(&self.path, &entry) {
+            Ok(image) => {
+                self.selected = index;
+                self.current_image = Some(image);
+                self.state = AppState::Viewing;
+                self.full_refresh = true;
+                self.dirty = true;
+                self.idle_ms = 0;
+                self.sleep_overlay = None;
+                self.sleep_overlay_pending = false;
+                if let Some(name) = self.current_entry_name_owned() {
+                    self.source.save_resume(Some(name.as_str()));
                 }
-                Err(err) => self.set_error(err),
             }
+            Err(err) => self.set_error(err),
         }
     }
 
-    fn refresh_images(&mut self) {
-        match self.source.refresh() {
-            Ok(images) => {
-                self.images = images;
+    fn refresh_entries(&mut self) {
+        match self.source.refresh(&self.path) {
+            Ok(entries) => {
+                self.entries = entries;
                 self.current_image = None;
-                if self.selected >= self.images.len() {
+                if self.selected >= self.entries.len() {
                     self.selected = 0;
                 }
                 self.state = AppState::Menu;
@@ -294,18 +323,26 @@ impl<'a, S: ImageSource> Application<'a, S> {
     }
 
     fn draw_menu(&mut self, display: &mut impl crate::display::Display) {
-        let items: Vec<ListItem<'_>> = self
-            .images
+        let mut labels: Vec<String> = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            if entry.kind == EntryKind::Dir {
+                let mut label = entry.name.clone();
+                label.push('/');
+                labels.push(label);
+            } else {
+                labels.push(entry.name.clone());
+            }
+        }
+        let items: Vec<ListItem<'_>> = labels
             .iter()
-            .map(|entry| ListItem {
-                label: entry.name.as_str(),
-            })
+            .map(|label| ListItem { label: label.as_str() })
             .collect();
 
+        let title = self.menu_title();
         let mut list = ListView::new(&items);
-        list.title = Some("Image Viewer");
-        list.footer = Some("Up/Down: select  Confirm: view  Back: refresh");
-        list.empty_label = Some("No images found in /images");
+        list.title = Some(title.as_str());
+        list.footer = Some("Up/Down: select  Confirm: open  Back: up");
+        list.empty_label = Some("No entries found in /images");
         list.selected = self.selected;
         list.margin_x = LIST_MARGIN_X;
         list.header_y = HEADER_Y;
@@ -417,7 +454,7 @@ impl<'a, S: ImageSource> Application<'a, S> {
 
         let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
         let text_x = x + padding;
-        let text_y = y + bar_h - 12;
+        let text_y = y + bar_h - 14;
         Text::new(text, Point::new(text_x, text_y), style)
             .draw(self.display_buffers)
             .ok();
@@ -479,10 +516,18 @@ impl<'a, S: ImageSource> Application<'a, S> {
         let Some(name) = self.resume_name.take() else {
             return;
         };
-        let idx = self
-            .images
-            .iter()
-            .position(|entry| entry.name == name);
+        let mut parts: Vec<String> = name
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .map(|part| part.to_string())
+            .collect();
+        if parts.is_empty() {
+            return;
+        }
+        let file = parts.pop().unwrap_or_default();
+        self.path = parts;
+        self.refresh_entries();
+        let idx = self.entries.iter().position(|entry| entry.name == file);
         if let Some(index) = idx {
             self.open_index(index);
         } else {
@@ -490,9 +535,29 @@ impl<'a, S: ImageSource> Application<'a, S> {
         }
     }
 
-    fn current_entry_name(&self) -> Option<&str> {
-        self.images.get(self.selected).map(|entry| entry.name.as_str())
+    fn current_entry_name_owned(&self) -> Option<String> {
+        let entry = self.entries.get(self.selected)?;
+        if entry.kind != EntryKind::File {
+            return None;
+        }
+        let mut parts = self.path.clone();
+        parts.push(entry.name.clone());
+        Some(parts.join("/"))
     }
+
+    fn menu_title(&self) -> String {
+        if self.path.is_empty() {
+            "Images".to_string()
+        } else {
+            let mut title = String::from("Images/");
+            title.push_str(&self.path.join("/"));
+            title
+        }
+    }
+}
+
+fn is_epub(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".epub")
 }
 
 struct SleepOverlay {

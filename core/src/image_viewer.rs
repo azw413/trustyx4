@@ -3,9 +3,16 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    Dir,
+    File,
+}
+
 #[derive(Clone, Debug)]
 pub struct ImageEntry {
     pub name: String,
+    pub kind: EntryKind,
 }
 
 #[derive(Clone, Debug)]
@@ -31,8 +38,8 @@ pub enum ImageError {
 }
 
 pub trait ImageSource {
-    fn refresh(&mut self) -> Result<Vec<ImageEntry>, ImageError>;
-    fn load(&mut self, entry: &ImageEntry) -> Result<ImageData, ImageError>;
+    fn refresh(&mut self, path: &[String]) -> Result<Vec<ImageEntry>, ImageError>;
+    fn load(&mut self, path: &[String], entry: &ImageEntry) -> Result<ImageData, ImageError>;
     fn sleep(&mut self) {}
     fn wake(&mut self) {}
     fn save_resume(&mut self, _name: Option<&str>) {}

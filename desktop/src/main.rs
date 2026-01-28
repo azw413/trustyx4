@@ -36,7 +36,7 @@ fn main() {
 
     let mut display_buffers = Box::new(DisplayBuffers::default());
     let mut display = Box::new(MinifbDisplay::new(window));
-    let mut image_source = DesktopImageSource::new("images");
+    let mut image_source = DesktopImageSource::new("sdcard");
     let mut application = Application::new(&mut display_buffers, &mut image_source);
     let mut last_tick = std::time::Instant::now();
 

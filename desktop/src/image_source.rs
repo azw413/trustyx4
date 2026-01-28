@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use trusty_core::image_viewer::{ImageData, ImageEntry, ImageError, ImageSource};
+use trusty_core::image_viewer::{EntryKind, ImageData, ImageEntry, ImageError, ImageSource};
 
 pub struct DesktopImageSource {
     root: PathBuf,
@@ -21,6 +21,8 @@ impl DesktopImageSource {
             || name.ends_with(".jpeg")
             || name.ends_with(".trimg")
             || name.ends_with(".tri")
+            || name.ends_with(".epub")
+            || name.ends_with(".epb")
     }
 
     fn resume_path(&self) -> PathBuf {
@@ -29,30 +31,57 @@ impl DesktopImageSource {
 }
 
 impl ImageSource for DesktopImageSource {
-    fn refresh(&mut self) -> Result<Vec<ImageEntry>, ImageError> {
+    fn refresh(&mut self, path: &[String]) -> Result<Vec<ImageEntry>, ImageError> {
         let mut entries = Vec::new();
-        let read_dir = match fs::read_dir(&self.root) {
+        let dir_path = path.iter().fold(self.root.clone(), |acc, part| acc.join(part));
+        let read_dir = match fs::read_dir(&dir_path) {
             Ok(read_dir) => read_dir,
             Err(_) => return Ok(entries),
         };
         for entry in read_dir {
             let entry = entry.map_err(|_| ImageError::Io)?;
             let file_type = entry.file_type().map_err(|_| ImageError::Io)?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name == ".trusty_resume" {
+                continue;
+            }
+            if file_type.is_dir() {
+                entries.push(ImageEntry {
+                    name,
+                    kind: EntryKind::Dir,
+                });
+                continue;
+            }
             if !file_type.is_file() {
                 continue;
             }
-            let name = entry.file_name().to_string_lossy().to_string();
             if Self::is_supported(&name) {
-                entries.push(ImageEntry { name });
+                entries.push(ImageEntry {
+                    name,
+                    kind: EntryKind::File,
+                });
             }
         }
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries.sort_by(|a, b| {
+            match (a.kind, b.kind) {
+                (EntryKind::Dir, EntryKind::File) => std::cmp::Ordering::Less,
+                (EntryKind::File, EntryKind::Dir) => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            }
+        });
         Ok(entries)
     }
 
-    fn load(&mut self, entry: &ImageEntry) -> Result<ImageData, ImageError> {
-        let path = self.root.join(&entry.name);
+    fn load(&mut self, path: &[String], entry: &ImageEntry) -> Result<ImageData, ImageError> {
+        if entry.kind != EntryKind::File {
+            return Err(ImageError::Unsupported);
+        }
+        let base = path.iter().fold(self.root.clone(), |acc, part| acc.join(part));
+        let path = base.join(&entry.name);
         let lower = entry.name.to_ascii_lowercase();
+        if lower.ends_with(".epub") || lower.ends_with(".epb") {
+            return Err(ImageError::Message("EPUB not implemented.".into()));
+        }
         if lower.ends_with(".trimg") || lower.ends_with(".tri") {
             let data = fs::read(&path).map_err(|_| ImageError::Io)?;
             return parse_trimg(&data);

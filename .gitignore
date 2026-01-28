@@ -2,7 +2,7 @@
 debug/
 target/
 images/
-
+sdcard/
 
 # Editor configuration
 .vscode/
