@@ -14,6 +14,13 @@ Can be ran on desktop with `cargo run --package trusty-desktop`
 ## Structure
 Try to put everything in [Core](/core/), so you can run it on a desktop.
 
+## Firmware status
+- Image viewer runs on desktop and device.
+- SD card `/images` menu with `.tri`/`.trimg` support.
+- Portrait UI (480x800) with full-width fit for converted images.
+- Selecting an image renders it, then the device sleeps; wake returns to the menu.
+- Barcode/QR re-rendering improves scan reliability.
+
 ## Resources
 - https://github.com/esp-rs/esp-hal
 - https://github.com/sunwoods/Xteink-X4/
