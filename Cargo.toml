@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "desktop", "x4"]
+members = ["core", "desktop", "x4", "tools/trusty-image"]
 
 [workspace.package]
 edition      = "2024"

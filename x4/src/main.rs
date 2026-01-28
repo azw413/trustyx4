@@ -26,8 +26,9 @@ use esp_backtrace as _;
 use esp_hal::Async;
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
+use esp_hal::gpio::{AnyPin, Input, InputConfig, Level, Output, OutputConfig, RtcPinWithResistors};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
+use esp_hal::rtc_cntl::{Rtc, sleep::{RtcioWakeupSource, WakeupLevel}};
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
@@ -125,6 +126,7 @@ async fn main(spawner: Spawner) {
     log_heap();
 
     let delay = Delay::new();
+    let mut rtc = Rtc::new(peripherals.LPWR);
 
     // Initialize shared SPI bus
     let spi_cfg = Config::default()
@@ -198,12 +200,17 @@ async fn main(spawner: Spawner) {
         button_state.update();
         let buttons = button_state.get_buttons();
         application.update(&buttons);
-        if application.take_wake_transition() {
-            display.begin().expect("Failed to reinitialize display");
-        }
         application.draw(&mut display);
+        let _ = application.take_wake_transition();
         if application.take_sleep_transition() {
             display.deep_sleep().ok();
+            let mut wake_pin = unsafe { AnyPin::steal(3) };
+            wake_pin.rtcio_pullup(true);
+            wake_pin.rtcio_pulldown(false);
+            let mut wake_pins: [(&mut dyn esp_hal::gpio::RtcPinWithResistors, WakeupLevel); 1] =
+                [(&mut wake_pin, WakeupLevel::Low)];
+            let rtcio = RtcioWakeupSource::new(&mut wake_pins);
+            rtc.sleep_deep(&[&rtcio]);
         }
     }
 }

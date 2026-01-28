@@ -16,7 +16,11 @@ impl DesktopImageSource {
 
     fn is_supported(name: &str) -> bool {
         let name = name.to_ascii_lowercase();
-        name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".jpeg")
+        name.ends_with(".png")
+            || name.ends_with(".jpg")
+            || name.ends_with(".jpeg")
+            || name.ends_with(".trimg")
+            || name.ends_with(".tri")
     }
 }
 
@@ -44,13 +48,40 @@ impl ImageSource for DesktopImageSource {
 
     fn load(&mut self, entry: &ImageEntry) -> Result<ImageData, ImageError> {
         let path = self.root.join(&entry.name);
+        let lower = entry.name.to_ascii_lowercase();
+        if lower.ends_with(".trimg") || lower.ends_with(".tri") {
+            let data = fs::read(&path).map_err(|_| ImageError::Io)?;
+            return parse_trimg(&data);
+        }
+
         let data = fs::read(&path).map_err(|_| ImageError::Io)?;
         let image = image::load_from_memory(&data).map_err(|_| ImageError::Decode)?;
         let luma = image.to_luma8();
-        Ok(ImageData {
+        Ok(ImageData::Gray8 {
             width: luma.width(),
             height: luma.height(),
             pixels: luma.into_raw(),
         })
     }
+}
+
+fn parse_trimg(data: &[u8]) -> Result<ImageData, ImageError> {
+    if data.len() < 16 || &data[0..4] != b"TRIM" {
+        return Err(ImageError::Decode);
+    }
+    if data[4] != 1 || data[5] != 1 {
+        return Err(ImageError::Unsupported);
+    }
+    let width = u16::from_le_bytes([data[6], data[7]]) as u32;
+    let height = u16::from_le_bytes([data[8], data[9]]) as u32;
+    let payload = &data[16..];
+    let expected = ((width as usize * height as usize) + 7) / 8;
+    if payload.len() != expected {
+        return Err(ImageError::Decode);
+    }
+    Ok(ImageData::Mono1 {
+        width,
+        height,
+        bits: payload.to_vec(),
+    })
 }

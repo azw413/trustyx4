@@ -20,3 +20,9 @@ Try to put everything in [Core](/core/), so you can run it on a desktop.
 - https://github.com/CidVonHighwind/microreader/
 - https://www.youtube.com/watch?v=0OMlUCyA_Ys
 - https://github.com/HookedBehemoth/microreader/tree/research
+
+
+## Image Conversion
+
+`cargo run -p trusty-image -- convert input.png output.trimg --size 800x480 --fit contain --dither
+  bayer`

@@ -9,10 +9,17 @@ pub struct ImageEntry {
 }
 
 #[derive(Clone, Debug)]
-pub struct ImageData {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>, // 8-bit grayscale, row-major
+pub enum ImageData {
+    Gray8 {
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>, // 8-bit grayscale, row-major
+    },
+    Mono1 {
+        width: u32,
+        height: u32,
+        bits: Vec<u8>, // 1-bit packed, row-major, MSB first
+    },
 }
 
 #[derive(Clone, Debug)]

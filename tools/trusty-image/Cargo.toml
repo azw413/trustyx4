@@ -1,0 +1,8 @@
+[package]
+name = "trusty-image"
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+image = "0.25.9"
+rxing = "0.8.3"

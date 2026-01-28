@@ -14,7 +14,7 @@ use embedded_graphics::{
 
 use crate::{
     display::RefreshMode,
-    framebuffer::DisplayBuffers,
+    framebuffer::{DisplayBuffers, Rotation},
     image_viewer::{ImageData, ImageEntry, ImageError, ImageSource},
     input,
 };
@@ -48,6 +48,7 @@ enum AppState {
 
 impl<'a, S: ImageSource> Application<'a, S> {
     pub fn new(display_buffers: &'a mut DisplayBuffers, source: &'a mut S) -> Self {
+        display_buffers.set_rotation(Rotation::Rotate90);
         let mut app = Application {
             dirty: true,
             display_buffers,
@@ -66,16 +67,18 @@ impl<'a, S: ImageSource> Application<'a, S> {
     }
 
     pub fn update(&mut self, buttons: &input::ButtonState) {
-        if buttons.is_pressed(input::Buttons::Power) {
-            if self.state == AppState::Sleeping {
-                self.source.wake();
-                self.state = AppState::Menu;
-                self.wake_transition = true;
-                self.full_refresh = true;
-                self.dirty = true;
-                self.refresh_images();
-                return;
-            }
+        if self.state == AppState::Sleeping
+            && (buttons.is_pressed(input::Buttons::Power)
+                || buttons.is_held(input::Buttons::Power))
+        {
+            self.source.wake();
+            self.state = AppState::Menu;
+            self.wake_transition = true;
+            self.sleep_transition = false;
+            self.full_refresh = true;
+            self.dirty = true;
+            self.refresh_images();
+            return;
         }
 
         match self.state {
@@ -99,16 +102,7 @@ impl<'a, S: ImageSource> Application<'a, S> {
             AppState::Viewing => {
                 // No input handling; we immediately sleep after drawing.
             }
-            AppState::Sleeping => {
-                if buttons.is_pressed(input::Buttons::Power) {
-                    self.source.wake();
-                    self.state = AppState::Menu;
-                    self.wake_transition = true;
-                    self.full_refresh = true;
-                    self.dirty = true;
-                    self.refresh_images();
-                }
-            }
+            AppState::Sleeping => {}
             AppState::Error => {
                 if buttons.is_pressed(input::Buttons::Back)
                     || buttons.is_pressed(input::Buttons::Confirm)
@@ -299,12 +293,64 @@ impl<'a, S: ImageSource> Application<'a, S> {
 
     fn render_image(&mut self, image: &ImageData) {
         self.display_buffers.clear(BinaryColor::On).ok();
+        match image {
+            ImageData::Mono1 {
+                width,
+                height,
+                bits,
+            } => self.render_mono1(*width, *height, bits),
+            ImageData::Gray8 {
+                width,
+                height,
+                pixels,
+            } => self.render_gray8(*width, *height, pixels),
+        }
+    }
 
+    fn render_mono1(&mut self, width: u32, height: u32, bits: &[u8]) {
         let target = self.display_buffers.size();
         let target_w = target.width.max(1);
         let target_h = target.height.max(1);
-        let img_w = image.width.max(1);
-        let img_h = image.height.max(1);
+
+        if width == target_w
+            && height == target_h
+            && self.display_buffers.rotation() == crate::framebuffer::Rotation::Rotate0
+            && bits.len() == self.display_buffers.get_active_buffer().len()
+        {
+            self.display_buffers
+                .get_active_buffer_mut()
+                .copy_from_slice(bits);
+            return;
+        }
+
+        let src_w = width as usize;
+        let src_h = height as usize;
+        for y in 0..target_h {
+            let src_y = (y as u64 * src_h as u64 / target_h as u64) as usize;
+            for x in 0..target_w {
+                let src_x = (x as u64 * src_w as u64 / target_w as u64) as usize;
+                let idx = src_y * src_w + src_x;
+                let byte = idx / 8;
+                if byte >= bits.len() {
+                    continue;
+                }
+                let bit = 7 - (idx % 8);
+                let white = (bits[byte] >> bit) & 0x01 == 1;
+                self.display_buffers.set_pixel(
+                    x as i32,
+                    y as i32,
+                    if white { BinaryColor::On } else { BinaryColor::Off },
+                );
+            }
+        }
+    }
+
+    fn render_gray8(&mut self, width: u32, height: u32, pixels: &[u8]) {
+        let target = self.display_buffers.size();
+        let target_w = target.width.max(1);
+        let target_h = target.height.max(1);
+        let img_w = width.max(1);
+        let img_h = height.max(1);
 
         let (scaled_w, scaled_h) = if img_w * target_h > img_h * target_w {
             let h = (img_h as u64 * target_w as u64 / img_w as u64) as u32;
@@ -329,10 +375,10 @@ impl<'a, S: ImageSource> Application<'a, S> {
             for x in 0..scaled_w {
                 let src_x = (x as u64 * img_w as u64 / scaled_w as u64) as usize;
                 let idx = src_y * img_w as usize + src_x;
-                if idx >= image.pixels.len() {
+                if idx >= pixels.len() {
                     continue;
                 }
-                let lum = image.pixels[idx];
+                let lum = pixels[idx];
                 let threshold = (bayer[(y as usize) & 3][(x as usize) & 3] * 16 + 8) as u8;
                 let color = if lum < threshold {
                     BinaryColor::Off
