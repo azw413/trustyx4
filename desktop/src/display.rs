@@ -52,7 +52,7 @@ impl MinifbDisplay {
 
     pub fn update_display(&mut self /*, window: &mut minifb::Window */) {
         self.window
-            .update_with_buffer(&self.display_buffer, WIDTH, HEIGHT)
+            .update_with_buffer(&self.display_buffer, HEIGHT, WIDTH)
             .unwrap();
     }
 
@@ -100,7 +100,7 @@ impl MinifbDisplay {
                         } else {
                             0xFF000000
                         };
-                        self.display_buffer[pixel_index] = pixel_value;
+                        self.set_portrait_pixel(pixel_index, pixel_value);
                     }
                 }
             }
@@ -116,10 +116,10 @@ impl MinifbDisplay {
                         }
                         if current_bit == 1 {
                             let pixel_index = i * 8 + bit;
-                            self.display_buffer[pixel_index] = 0xFFFFFFFF;
+                            self.set_portrait_pixel(pixel_index, 0xFFFFFFFF);
                         } else {
                             let pixel_index = i * 8 + bit;
-                            self.display_buffer[pixel_index] = 0xFF000000;
+                            self.set_portrait_pixel(pixel_index, 0xFF000000);
                         }
                     }
                 }
@@ -132,7 +132,7 @@ impl MinifbDisplay {
                         let pixel_index = i * 8 + bit;
                         let lsb_bit = (lsb_byte >> (7 - bit)) & 0x01;
                         let msb_bit = (msb_byte >> (7 - bit)) & 0x01;
-                        let current_pixel = self.display_buffer[pixel_index];
+                        let current_pixel = self.get_portrait_pixel(pixel_index);
                         let new_pixel = match (msb_bit, lsb_bit) {
                             (0, 0) => continue,
                             (0, 1) => current_pixel.saturating_sub(0x555555), // Black -> Dark Gray
@@ -140,7 +140,7 @@ impl MinifbDisplay {
                             (1, 1) => current_pixel.saturating_add(0x333333), // White -> Light Gray
                             _ => unreachable!(),
                         };
-                        self.display_buffer[pixel_index] = new_pixel;
+                        self.set_portrait_pixel(pixel_index, new_pixel);
                     }
                 }
             }
@@ -152,7 +152,7 @@ impl MinifbDisplay {
                         let pixel_index = i * 8 + bit;
                         let lsb_bit = (lsb_byte >> (7 - bit)) & 0x01;
                         let msb_bit = (msb_byte >> (7 - bit)) & 0x01;
-                        let current_pixel = self.display_buffer[pixel_index];
+                        let current_pixel = self.get_portrait_pixel(pixel_index);
                         let new_pixel = match (msb_bit, lsb_bit) {
                             (0, 0) => continue,
                             (0, 1) => current_pixel.saturating_add(0x555555), // Dark Gray  -> Black
@@ -160,12 +160,46 @@ impl MinifbDisplay {
                             (1, 1) => current_pixel.saturating_sub(0x333333), // Light Gray -> White
                             _ => unreachable!(),
                         };
-                        self.display_buffer[pixel_index] = new_pixel;
+                        self.set_portrait_pixel(pixel_index, new_pixel);
                     }
                 }
             }
         }
         self.update_display();
+    }
+
+    fn set_portrait_pixel(&mut self, landscape_index: usize, color: u32) {
+        let x_land = (landscape_index % WIDTH) as i32;
+        let y_land = (landscape_index / WIDTH) as i32;
+        let x_portrait = (HEIGHT as i32 - 1) - y_land;
+        let y_portrait = x_land;
+        if x_portrait < 0 || y_portrait < 0 {
+            return;
+        }
+        let x_portrait = x_portrait as usize;
+        let y_portrait = y_portrait as usize;
+        let idx = y_portrait * HEIGHT + x_portrait;
+        if idx < self.display_buffer.len() {
+            self.display_buffer[idx] = color;
+        }
+    }
+
+    fn get_portrait_pixel(&self, landscape_index: usize) -> u32 {
+        let x_land = (landscape_index % WIDTH) as i32;
+        let y_land = (landscape_index / WIDTH) as i32;
+        let x_portrait = (HEIGHT as i32 - 1) - y_land;
+        let y_portrait = x_land;
+        if x_portrait < 0 || y_portrait < 0 {
+            return 0xFFFFFFFF;
+        }
+        let x_portrait = x_portrait as usize;
+        let y_portrait = y_portrait as usize;
+        let idx = y_portrait * HEIGHT + x_portrait;
+        if idx < self.display_buffer.len() {
+            self.display_buffer[idx]
+        } else {
+            0xFFFFFFFF
+        }
     }
 }
 

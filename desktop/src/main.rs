@@ -24,9 +24,8 @@ fn main() {
     };
     let mut window = minifb::Window::new(
         "Trusty Desktop",
-        // swapped
-        WIDTH,
         HEIGHT,
+        WIDTH,
         options,
     )
     .unwrap_or_else(|e| {
