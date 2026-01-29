@@ -47,6 +47,17 @@ pub trait ImageSource {
     ) -> Result<crate::trbk::TrbkBook, ImageError> {
         Err(ImageError::Unsupported)
     }
+    fn open_trbk(
+        &mut self,
+        _path: &[String],
+        _entry: &ImageEntry,
+    ) -> Result<crate::trbk::TrbkBookInfo, ImageError> {
+        Err(ImageError::Unsupported)
+    }
+    fn trbk_page(&mut self, _page_index: usize) -> Result<crate::trbk::TrbkPage, ImageError> {
+        Err(ImageError::Unsupported)
+    }
+    fn close_trbk(&mut self) {}
     fn sleep(&mut self) {}
     fn wake(&mut self) {}
     fn save_resume(&mut self, _name: Option<&str>) {}

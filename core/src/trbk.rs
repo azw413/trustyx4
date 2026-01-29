@@ -28,6 +28,18 @@ pub struct TrbkBook {
     pub pages: Vec<TrbkPage>,
     pub metadata: TrbkMetadata,
     pub glyphs: Vec<TrbkGlyph>,
+    pub page_count: usize,
+    pub toc: Vec<TrbkTocEntry>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrbkBookInfo {
+    pub screen_width: u16,
+    pub screen_height: u16,
+    pub page_count: usize,
+    pub metadata: TrbkMetadata,
+    pub glyphs: Vec<TrbkGlyph>,
+    pub toc: Vec<TrbkTocEntry>,
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +62,13 @@ pub struct TrbkGlyph {
     pub x_offset: i16,
     pub y_offset: i16,
     pub bitmap: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrbkTocEntry {
+    pub title: String,
+    pub page_index: u32,
+    pub level: u8,
 }
 
 pub fn parse_trbk(data: &[u8]) -> Result<TrbkBook, ImageError> {
@@ -116,9 +135,11 @@ pub fn parse_trbk(data: &[u8]) -> Result<TrbkBook, ImageError> {
         return Err(ImageError::Decode);
     }
 
-    if toc_count != 0 {
-        // Skip TOC for now.
-    }
+    let toc = if toc_count > 0 {
+        parse_trbk_toc(data, toc_offset as usize, toc_count)?
+    } else {
+        Vec::new()
+    };
 
     let lut_len = page_count * 4;
     if page_lut_offset + lut_len > data.len() {
@@ -144,7 +165,7 @@ pub fn parse_trbk(data: &[u8]) -> Result<TrbkBook, ImageError> {
         if start > data.len() || end > data.len() || start > end {
             return Err(ImageError::Decode);
         }
-        let ops = parse_page_ops(&data[start..end])?;
+        let ops = parse_trbk_page_ops(&data[start..end])?;
         pages.push(TrbkPage { ops });
     }
 
@@ -173,10 +194,55 @@ pub fn parse_trbk(data: &[u8]) -> Result<TrbkBook, ImageError> {
             margin_bottom,
         },
         glyphs,
+        page_count,
+        toc,
     })
 }
 
-fn parse_page_ops(data: &[u8]) -> Result<Vec<TrbkOp>, ImageError> {
+impl TrbkBook {
+    pub fn info(&self) -> TrbkBookInfo {
+        TrbkBookInfo {
+            screen_width: self.screen_width,
+            screen_height: self.screen_height,
+            page_count: self.page_count,
+            metadata: self.metadata.clone(),
+            glyphs: self.glyphs.clone(),
+            toc: self.toc.clone(),
+        }
+    }
+}
+
+fn parse_trbk_toc(
+    data: &[u8],
+    offset: usize,
+    count: usize,
+) -> Result<Vec<TrbkTocEntry>, ImageError> {
+    if offset > data.len() {
+        return Err(ImageError::Decode);
+    }
+    let mut cursor = offset;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let title = read_string(data, &mut cursor)?;
+        if cursor + 4 + 1 + 1 + 2 > data.len() {
+            return Err(ImageError::Decode);
+        }
+        let page_index = read_u32(data, cursor)?;
+        cursor += 4;
+        let level = data[cursor];
+        cursor += 1;
+        cursor += 1; // reserved
+        cursor += 2; // reserved
+        entries.push(TrbkTocEntry {
+            title,
+            page_index,
+            level,
+        });
+    }
+    Ok(entries)
+}
+
+pub fn parse_trbk_page_ops(data: &[u8]) -> Result<Vec<TrbkOp>, ImageError> {
     let mut ops = Vec::new();
     let mut cursor = 0usize;
     while cursor + 3 <= data.len() {

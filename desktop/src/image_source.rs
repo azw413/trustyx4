@@ -6,12 +6,14 @@ use trusty_core::image_viewer::{EntryKind, ImageData, ImageEntry, ImageError, Im
 
 pub struct DesktopImageSource {
     root: PathBuf,
+    trbk_pages: Option<Vec<trusty_core::trbk::TrbkPage>>,
 }
 
 impl DesktopImageSource {
     pub fn new<P: AsRef<Path>>(root: P) -> Self {
         Self {
             root: root.as_ref().to_path_buf(),
+            trbk_pages: None,
         }
     }
 
@@ -131,6 +133,31 @@ impl ImageSource for DesktopImageSource {
                 Err(err)
             }
         }
+    }
+
+    fn open_trbk(
+        &mut self,
+        path: &[String],
+        entry: &ImageEntry,
+    ) -> Result<trusty_core::trbk::TrbkBookInfo, ImageError> {
+        let book = self.load_trbk(path, entry)?;
+        let info = book.info();
+        self.trbk_pages = Some(book.pages);
+        Ok(info)
+    }
+
+    fn trbk_page(&mut self, page_index: usize) -> Result<trusty_core::trbk::TrbkPage, ImageError> {
+        let Some(pages) = self.trbk_pages.as_ref() else {
+            return Err(ImageError::Decode);
+        };
+        pages
+            .get(page_index)
+            .cloned()
+            .ok_or(ImageError::Decode)
+    }
+
+    fn close_trbk(&mut self) {
+        self.trbk_pages = None;
     }
 }
 

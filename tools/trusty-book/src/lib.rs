@@ -82,7 +82,20 @@ pub struct Glyph {
 
 #[derive(Clone, Debug)]
 struct RunLine {
+    spine_index: i32,
     runs: Vec<trusty_epub::TextRun>,
+}
+
+struct SpineRuns {
+    spine_index: i32,
+    runs: Vec<trusty_epub::TextRun>,
+}
+
+#[derive(Clone, Debug)]
+struct TrbkTocEntry {
+    title: String,
+    page_index: u32,
+    level: u8,
 }
 
 pub fn convert_epub_to_trbk<P: AsRef<Path>, Q: AsRef<Path>>(
@@ -131,8 +144,8 @@ pub fn convert_epub_to_trbk_multi<P: AsRef<Path>, Q: AsRef<Path>>(
             .to_string(),
     };
 
-    let runs = extract_runs(epub_path, &cache, 200)?;
-    let used = collect_used_codepoints(&runs);
+    let spine_runs = extract_runs(epub_path, &cache, 200)?;
+    let used = collect_used_codepoints(&spine_runs);
     let font_set = load_fonts(font_paths)?;
 
     let sizes = if sizes.is_empty() { vec![10] } else { sizes.to_vec() };
@@ -171,9 +184,19 @@ pub fn convert_epub_to_trbk_multi<P: AsRef<Path>, Q: AsRef<Path>>(
         }
         let glyphs = build_glyphs(&font_set, *size, &used)?;
         let advance_map = build_advance_map(&glyphs);
-        let lines = wrap_runs(&runs, &options, &advance_map);
+        let lines = wrap_runs(&spine_runs, &options, &advance_map);
         let pages = paginate_lines(&lines, &options);
-        write_trbk(&output, &metadata, &options, &pages, &glyphs, &advance_map)?;
+        let spine_to_page = compute_spine_page_map(&pages, cache.spine.len());
+        let toc_entries = build_toc_entries(&cache, &spine_to_page);
+        write_trbk(
+            &output,
+            &metadata,
+            &options,
+            &pages,
+            &glyphs,
+            &advance_map,
+            &toc_entries,
+        )?;
     }
 
     Ok(())
@@ -183,8 +206,8 @@ fn extract_runs(
     epub_path: &Path,
     cache: &trusty_epub::BookCache,
     max_spine_items: usize,
-) -> Result<Vec<trusty_epub::TextRun>, BookError> {
-    let mut runs = Vec::new();
+) -> Result<Vec<SpineRuns>, BookError> {
+    let mut out = Vec::new();
     let max_try = cache.spine.len().min(max_spine_items).max(1);
     for index in 0..max_try {
         let xhtml = match trusty_epub::read_spine_xhtml(epub_path, index) {
@@ -197,17 +220,20 @@ fn extract_runs(
         };
         let block_runs = trusty_epub::blocks_to_runs(&blocks);
         if !block_runs.is_empty() {
-            runs.extend(block_runs);
+            out.push(SpineRuns {
+                spine_index: index as i32,
+                runs: block_runs,
+            });
         }
-        if runs.len() > 50000 {
+        if out.len() > 500 {
             break;
         }
     }
-    Ok(runs)
+    Ok(out)
 }
 
 fn wrap_runs(
-    runs: &[trusty_epub::TextRun],
+    runs: &[SpineRuns],
     options: &RenderOptions,
     advance_map: &HashMap<(StyleId, u32), i16>,
 ) -> Vec<RunLine> {
@@ -215,10 +241,13 @@ fn wrap_runs(
     let mut lines = Vec::new();
     let mut current: Vec<trusty_epub::TextRun> = Vec::new();
     let mut current_width = 0i32;
+    let mut current_spine = -1i32;
 
-    for run in runs {
-        for token in run.text.split_whitespace() {
-            let token_width = measure_token_width(token, run.style, options, advance_map);
+    for spine in runs {
+        current_spine = spine.spine_index;
+        for run in &spine.runs {
+            for token in run.text.split_whitespace() {
+                let token_width = measure_token_width(token, run.style, options, advance_map);
             if current_width == 0 {
                 current.push(trusty_epub::TextRun {
                     text: token.to_string(),
@@ -241,24 +270,34 @@ fn wrap_runs(
                 current_width += space_width + token_width;
                 continue;
             }
-            lines.push(RunLine { runs: current });
+            lines.push(RunLine {
+                spine_index: current_spine,
+                runs: current,
+            });
             current = Vec::new();
             current.push(trusty_epub::TextRun {
                 text: token.to_string(),
                 style: run.style,
             });
             current_width = token_width;
-        }
-        if run.text.contains('\n') {
-            if !current.is_empty() {
-                lines.push(RunLine { runs: current });
-                current = Vec::new();
-                current_width = 0;
+            }
+            if run.text.contains('\n') {
+                if !current.is_empty() {
+                    lines.push(RunLine {
+                        spine_index: current_spine,
+                        runs: current,
+                    });
+                    current = Vec::new();
+                    current_width = 0;
+                }
             }
         }
     }
     if !current.is_empty() {
-        lines.push(RunLine { runs: current });
+        lines.push(RunLine {
+            spine_index: current_spine,
+            runs: current,
+        });
     }
     lines
 }
@@ -270,22 +309,55 @@ fn paginate_lines(lines: &[RunLine], options: &RenderOptions) -> Vec<RunLine> {
         .max(1);
     let lines_per_page = (usable_height as usize / options.line_height as usize).max(1);
     let mut pages = Vec::new();
-    let mut idx = 0;
-    while idx < lines.len() {
-        let end = (idx + lines_per_page).min(lines.len());
-        let mut page_runs = Vec::new();
-        for line in &lines[idx..end] {
-            page_runs.extend(line.runs.clone());
-            page_runs.push(trusty_epub::TextRun {
-                text: "\n".to_string(),
-                style: trusty_epub::TextStyle::default(),
+    let mut page_runs = Vec::new();
+    let mut spine_index = -1i32;
+    let mut line_count = 0usize;
+
+    for line in lines {
+        // Force chapter starts to begin on a new page.
+        if spine_index >= 0
+            && line.spine_index >= 0
+            && line.spine_index != spine_index
+            && !page_runs.is_empty()
+        {
+            pages.push(RunLine {
+                spine_index,
+                runs: page_runs,
             });
+            page_runs = Vec::new();
+            line_count = 0;
+            spine_index = -1;
         }
-        pages.push(RunLine { runs: page_runs });
-        idx = end;
+
+        if spine_index < 0 {
+            spine_index = line.spine_index;
+        }
+        page_runs.extend(line.runs.clone());
+        page_runs.push(trusty_epub::TextRun {
+            text: "\n".to_string(),
+            style: trusty_epub::TextStyle::default(),
+        });
+        line_count += 1;
+
+        if line_count >= lines_per_page {
+            pages.push(RunLine {
+                spine_index,
+                runs: page_runs,
+            });
+            page_runs = Vec::new();
+            line_count = 0;
+            spine_index = -1;
+        }
+    }
+    if !page_runs.is_empty() {
+        pages.push(RunLine {
+            spine_index,
+            runs: page_runs,
+        });
     }
     if pages.is_empty() {
         pages.push(RunLine {
+            spine_index: -1,
             runs: vec![trusty_epub::TextRun {
                 text: "(empty)".to_string(),
                 style: trusty_epub::TextStyle::default(),
@@ -345,6 +417,64 @@ fn measure_token_width(
     width
 }
 
+fn compute_spine_page_map(pages: &[RunLine], spine_count: usize) -> Vec<i32> {
+    let mut map = vec![-1i32; spine_count];
+    for (page_idx, page) in pages.iter().enumerate() {
+        if page.spine_index >= 0 {
+            let spine = page.spine_index as usize;
+            if spine < map.len() && map[spine] < 0 {
+                map[spine] = page_idx as i32;
+            }
+        }
+    }
+    map
+}
+
+fn build_toc_entries(
+    cache: &trusty_epub::BookCache,
+    spine_to_page: &[i32],
+) -> Vec<TrbkTocEntry> {
+    let mut entries = Vec::new();
+    for entry in &cache.toc {
+        if entry.spine_index < 0 {
+            continue;
+        }
+        let spine = entry.spine_index as usize;
+        if spine >= spine_to_page.len() {
+            continue;
+        }
+        let page_index = spine_to_page[spine];
+        if page_index < 0 {
+            continue;
+        }
+        entries.push(TrbkTocEntry {
+            title: entry.title.clone(),
+            page_index: page_index as u32,
+            level: entry.level,
+        });
+    }
+    if entries.is_empty() {
+        for (idx, spine) in cache.spine.iter().enumerate() {
+            let page_index = spine_to_page.get(idx).copied().unwrap_or(-1);
+            if page_index < 0 {
+                continue;
+            }
+            let title = spine
+                .href
+                .split('/')
+                .last()
+                .unwrap_or("Chapter")
+                .to_string();
+            entries.push(TrbkTocEntry {
+                title,
+                page_index: page_index as u32,
+                level: 0,
+            });
+        }
+    }
+    entries
+}
+
 fn write_trbk(
     path: &Path,
     metadata: &TrbkMetadata,
@@ -352,10 +482,11 @@ fn write_trbk(
     pages: &[RunLine],
     glyphs: &[Glyph],
     advance_map: &HashMap<(StyleId, u32), i16>,
+    toc_entries: &[TrbkTocEntry],
 ) -> Result<(), BookError> {
     let mut file = File::create(path)?;
 
-    let toc_count: u32 = 0;
+    let toc_count: u32 = toc_entries.len() as u32;
     let page_count = pages.len() as u32;
     let glyph_count = glyphs.len() as u32;
 
@@ -377,7 +508,15 @@ fn write_trbk(
 
     let header_size: u16 = fixed_header_size + metadata_bytes.len() as u16;
     let toc_offset: u32 = header_size as u32;
-    let page_lut_offset: u32 = toc_offset + toc_count * 12;
+    let mut toc_bytes = Vec::new();
+    for entry in toc_entries {
+        write_string(&mut toc_bytes, &entry.title)?;
+        toc_bytes.extend_from_slice(&entry.page_index.to_le_bytes());
+        toc_bytes.push(entry.level);
+        toc_bytes.push(0);
+        toc_bytes.extend_from_slice(&0u16.to_le_bytes());
+    }
+    let page_lut_offset: u32 = toc_offset + toc_bytes.len() as u32;
 
     let mut page_lut = Vec::new();
     let mut page_data = Vec::new();
@@ -442,9 +581,8 @@ fn write_trbk(
     file.write_all(&metadata_bytes)?;
 
     if toc_count != 0 {
-        return Err(BookError::InvalidOutput);
+        file.write_all(&toc_bytes)?;
     }
-
     file.write_all(&page_lut)?;
     file.write_all(&page_data)?;
     write_glyph_table(&mut file, glyphs)?;
@@ -483,13 +621,15 @@ fn style_id_from_style(style: trusty_epub::TextStyle) -> StyleId {
     }
 }
 
-fn collect_used_codepoints(runs: &[trusty_epub::TextRun]) -> HashMap<StyleId, BTreeSet<u32>> {
+fn collect_used_codepoints(runs: &[SpineRuns]) -> HashMap<StyleId, BTreeSet<u32>> {
     let mut map: HashMap<StyleId, BTreeSet<u32>> = HashMap::new();
-    for run in runs {
-        let style = style_id_from_style(run.style);
-        let entry = map.entry(style).or_default();
-        for ch in run.text.chars() {
-            entry.insert(ch as u32);
+    for spine in runs {
+        for run in &spine.runs {
+            let style = style_id_from_style(run.style);
+            let entry = map.entry(style).or_default();
+            for ch in run.text.chars() {
+                entry.insert(ch as u32);
+            }
         }
     }
     map

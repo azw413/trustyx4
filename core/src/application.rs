@@ -32,7 +32,9 @@ pub struct Application<'a, S: ImageSource> {
     selected: usize,
     state: AppState,
     current_image: Option<ImageData>,
-    current_book: Option<crate::trbk::TrbkBook>,
+    current_book: Option<crate::trbk::TrbkBookInfo>,
+    current_page_ops: Option<crate::trbk::TrbkPage>,
+    toc_selected: usize,
     current_page: usize,
     error_message: Option<String>,
     sleep_transition: bool,
@@ -52,6 +54,7 @@ enum AppState {
     Menu,
     Viewing,
     BookViewing,
+    Toc,
     Sleeping,
     Error,
 }
@@ -69,6 +72,8 @@ impl<'a, S: ImageSource> Application<'a, S> {
             state: AppState::Menu,
             current_image: None,
             current_book: None,
+            current_page_ops: None,
+            toc_selected: 0,
             current_page: 0,
             error_message: None,
             sleep_transition: false,
@@ -176,21 +181,62 @@ impl<'a, S: ImageSource> Application<'a, S> {
                 {
                     if self.current_page > 0 {
                         self.current_page = self.current_page.saturating_sub(1);
+                        self.current_page_ops = self.source.trbk_page(self.current_page).ok();
                         self.dirty = true;
                     }
                 } else if buttons.is_pressed(input::Buttons::Right)
                     || buttons.is_pressed(input::Buttons::Down)
                 {
                     if let Some(book) = &self.current_book {
-                        if self.current_page + 1 < book.pages.len() {
+                        if self.current_page + 1 < book.page_count {
                             self.current_page += 1;
+                            self.current_page_ops = self.source.trbk_page(self.current_page).ok();
                             self.dirty = true;
                         }
                     }
-                } else if buttons.is_pressed(input::Buttons::Back)
-                    || buttons.is_pressed(input::Buttons::Confirm)
-                {
+                } else if buttons.is_pressed(input::Buttons::Confirm) {
+                    if let Some(book) = &self.current_book {
+                        if !book.toc.is_empty() {
+                            self.toc_selected = find_toc_selection(book, self.current_page);
+                            self.state = AppState::Toc;
+                            self.dirty = true;
+                        }
+                    }
+                } else if buttons.is_pressed(input::Buttons::Back) {
                     self.state = AppState::Menu;
+                    self.current_book = None;
+                    self.current_page_ops = None;
+                    self.source.close_trbk();
+                    self.dirty = true;
+                }
+            }
+            AppState::Toc => {
+                if let Some(book) = &self.current_book {
+                    let toc_len = book.toc.len();
+                    if buttons.is_pressed(input::Buttons::Up) {
+                        if self.toc_selected > 0 {
+                            self.toc_selected -= 1;
+                            self.dirty = true;
+                        }
+                    } else if buttons.is_pressed(input::Buttons::Down) {
+                        if self.toc_selected + 1 < toc_len {
+                            self.toc_selected += 1;
+                            self.dirty = true;
+                        }
+                    } else if buttons.is_pressed(input::Buttons::Confirm) {
+                        if let Some(entry) = book.toc.get(self.toc_selected) {
+                            self.current_page = entry.page_index as usize;
+                            self.current_page_ops = self.source.trbk_page(self.current_page).ok();
+                            self.state = AppState::BookViewing;
+                            self.full_refresh = true;
+                            self.dirty = true;
+                        }
+                    } else if buttons.is_pressed(input::Buttons::Back) {
+                        self.state = AppState::BookViewing;
+                        self.dirty = true;
+                    }
+                } else {
+                    self.state = AppState::BookViewing;
                     self.dirty = true;
                 }
             }
@@ -217,6 +263,7 @@ impl<'a, S: ImageSource> Application<'a, S> {
             AppState::Menu => self.draw_menu(display),
             AppState::Viewing => self.draw_image(display),
             AppState::BookViewing => self.draw_book(display),
+            AppState::Toc => self.draw_toc(display),
             AppState::Sleeping => {
                 if self.sleep_overlay_pending {
                     self.draw_sleep_overlay(display);
@@ -270,10 +317,11 @@ impl<'a, S: ImageSource> Application<'a, S> {
             }
             EntryKind::File => {
                 if is_trbk(&entry.name) {
-                    match self.source.load_trbk(&self.path, &entry) {
-                        Ok(book) => {
-                            self.current_book = Some(book);
+                    match self.source.open_trbk(&self.path, &entry) {
+                        Ok(info) => {
+                            self.current_book = Some(info);
                             self.current_page = 0;
+                            self.current_page_ops = self.source.trbk_page(0).ok();
                             self.state = AppState::BookViewing;
                             self.full_refresh = true;
                             self.dirty = true;
@@ -319,10 +367,11 @@ impl<'a, S: ImageSource> Application<'a, S> {
             return;
         }
         if is_trbk(&entry.name) {
-            match self.source.load_trbk(&self.path, &entry) {
-                Ok(book) => {
-                    self.current_book = Some(book);
+            match self.source.open_trbk(&self.path, &entry) {
+                Ok(info) => {
+                    self.current_book = Some(info);
                     self.current_page = 0;
+                    self.current_page_ops = self.source.trbk_page(0).ok();
                     self.state = AppState::BookViewing;
                     self.full_refresh = true;
                     self.dirty = true;
@@ -361,6 +410,7 @@ impl<'a, S: ImageSource> Application<'a, S> {
                 self.entries = entries;
                 self.current_image = None;
                 self.current_book = None;
+                self.current_page_ops = None;
                 self.current_page = 0;
                 if self.selected >= self.entries.len() {
                     self.selected = 0;
@@ -455,6 +505,48 @@ impl<'a, S: ImageSource> Application<'a, S> {
         flush_queue(display, self.display_buffers, &mut rq, RefreshMode::Full);
     }
 
+    fn draw_toc(&mut self, display: &mut impl crate::display::Display) {
+        self.display_buffers.clear(BinaryColor::On).ok();
+        let Some(book) = &self.current_book else {
+            self.set_error(ImageError::Decode);
+            return;
+        };
+        let mut labels: Vec<String> = Vec::with_capacity(book.toc.len());
+        for entry in &book.toc {
+            let mut label = String::new();
+            let indent = (entry.level as usize).min(6);
+            for _ in 0..indent {
+                label.push_str("  ");
+            }
+            label.push_str(entry.title.as_str());
+            labels.push(label);
+        }
+        let items: Vec<ListItem<'_>> = labels
+            .iter()
+            .map(|label| ListItem { label: label.as_str() })
+            .collect();
+
+        let title = book.metadata.title.as_str();
+        let mut list = ListView::new(&items);
+        list.title = Some(title);
+        list.footer = Some("Up/Down: select  Confirm: jump  Back: return");
+        list.empty_label = Some("No table of contents.");
+        list.selected = self.toc_selected.min(items.len().saturating_sub(1));
+        list.margin_x = LIST_MARGIN_X;
+        list.header_y = HEADER_Y;
+        list.list_top = LIST_TOP;
+        list.line_height = LINE_HEIGHT;
+
+        let size = self.display_buffers.size();
+        let rect = Rect::new(0, 0, size.width as i32, size.height as i32);
+        let mut rq = RenderQueue::default();
+        let mut ctx = UiContext {
+            buffers: self.display_buffers,
+        };
+        list.render(&mut ctx, rect, &mut rq);
+        flush_queue(display, self.display_buffers, &mut rq, RefreshMode::Full);
+    }
+
     fn draw_image(&mut self, display: &mut impl crate::display::Display) {
         if self.wake_restore_only {
             self.wake_restore_only = false;
@@ -491,7 +583,10 @@ impl<'a, S: ImageSource> Application<'a, S> {
             self.set_error(ImageError::Decode);
             return;
         };
-        if let Some(page) = book.pages.get(self.current_page) {
+        if self.current_page_ops.is_none() {
+            self.current_page_ops = self.source.trbk_page(self.current_page).ok();
+        }
+        if let Some(page) = self.current_page_ops.as_ref() {
             for op in &page.ops {
                 match op {
                     crate::trbk::TrbkOp::TextRun { x, y, style, text } => {
@@ -512,7 +607,7 @@ impl<'a, S: ImageSource> Application<'a, S> {
 
     fn draw_trbk_text(
         buffers: &mut DisplayBuffers,
-        book: &crate::trbk::TrbkBook,
+        book: &crate::trbk::TrbkBookInfo,
         x: i32,
         y: i32,
         style: u8,
@@ -685,6 +780,18 @@ fn find_glyph<'a>(
     glyphs
         .iter()
         .find(|glyph| glyph.style == style && glyph.codepoint == codepoint)
+}
+
+fn find_toc_selection(book: &crate::trbk::TrbkBookInfo, page: usize) -> usize {
+    let mut selected = 0usize;
+    for (idx, entry) in book.toc.iter().enumerate() {
+        if (entry.page_index as usize) <= page {
+            selected = idx;
+        } else {
+            break;
+        }
+    }
+    selected
 }
 
 fn draw_glyph(
