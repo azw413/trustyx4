@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use trusty_core::image_viewer::{EntryKind, ImageData, ImageEntry, ImageError, ImageSource};
+use trusty_epub::{BookCache, CacheStatus, CacheTocEntry};
 
 pub struct DesktopImageSource {
     root: PathBuf,
@@ -106,6 +107,78 @@ impl ImageSource for DesktopImageSource {
         }
     }
 
+    fn epub_info(&mut self, path: &[String], entry: &ImageEntry) -> Option<String> {
+        if entry.kind != EntryKind::File {
+            return None;
+        }
+        let lower = entry.name.to_ascii_lowercase();
+        if !lower.ends_with(".epub") && !lower.ends_with(".epb") {
+            return None;
+        }
+
+        let base = path.iter().fold(self.root.clone(), |acc, part| acc.join(part));
+        let path = base.join(&entry.name);
+        let cache_dir = trusty_epub::default_cache_dir(&path);
+        match trusty_epub::load_or_build_cache(&path, &cache_dir) {
+            Ok((cache, status)) => Some(format_epub_info(&cache, &status)),
+            Err(err) => Some(format!("Failed to open EPUB:\n{err}")),
+        }
+    }
+
+    fn epub_preview_text(&mut self, path: &[String], entry: &ImageEntry) -> Option<String> {
+        if entry.kind != EntryKind::File {
+            return None;
+        }
+        let lower = entry.name.to_ascii_lowercase();
+        if !lower.ends_with(".epub") && !lower.ends_with(".epb") {
+            return None;
+        }
+
+        let base = path.iter().fold(self.root.clone(), |acc, part| acc.join(part));
+        let path = base.join(&entry.name);
+        let cache_dir = trusty_epub::default_cache_dir(&path);
+        let spine_count = trusty_epub::load_or_build_cache(&path, &cache_dir)
+            .map(|(cache, _)| cache.spine.len())
+            .unwrap_or(1);
+        let max_try = spine_count.min(20).max(1);
+
+        let mut last_snippet = String::new();
+        let mut last_bytes = 0usize;
+        let mut combined = String::new();
+        for index in 0..max_try {
+            let xhtml = match trusty_epub::read_spine_xhtml(&path, index) {
+                Ok(xhtml) => xhtml,
+                Err(_) => continue,
+            };
+            last_bytes = xhtml.len();
+            last_snippet = xhtml.chars().take(400).collect::<String>();
+            let blocks = match trusty_epub::parse_xhtml_blocks(&xhtml) {
+                Ok(blocks) => blocks,
+                Err(_) => continue,
+            };
+            let text = trusty_epub::blocks_to_plain_text(&blocks);
+            let filtered = filter_preview_text(&text);
+            if !filtered.trim().is_empty() {
+                if !combined.is_empty() {
+                    combined.push_str("\n\n");
+                }
+                combined.push_str(filtered.trim());
+                if combined.len() > 2000 {
+                    break;
+                }
+            }
+        }
+
+        if !combined.trim().is_empty() {
+            return Some(combined);
+        }
+
+        Some(format!(
+            "No preview text extracted.\n\nTried {} spine item(s).\nLast bytes: {}\nTop of file:\n{}",
+            max_try, last_bytes, last_snippet
+        ))
+    }
+
     fn load_resume(&mut self) -> Option<String> {
         let path = self.resume_path();
         let data = fs::read(path).ok()?;
@@ -116,6 +189,79 @@ impl ImageSource for DesktopImageSource {
             Some(name)
         }
     }
+}
+
+fn format_epub_info(cache: &BookCache, status: &CacheStatus) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "Title: {}",
+        cache.metadata.title.as_deref().unwrap_or("<unknown>")
+    ));
+    lines.push(format!(
+        "Author: {}",
+        cache.metadata.creator.as_deref().unwrap_or("<unknown>")
+    ));
+    lines.push(format!(
+        "Language: {}",
+        cache.metadata.language.as_deref().unwrap_or("<unknown>")
+    ));
+    lines.push(format!(
+        "Identifier: {}",
+        cache.metadata.identifier.as_deref().unwrap_or("<unknown>")
+    ));
+    lines.push(format!("OPF: {}", cache.opf_path));
+    lines.push(format!(
+        "Cover: {}",
+        cache.cover_href.as_deref().unwrap_or("<none>")
+    ));
+    lines.push(format!("Spine items: {}", cache.spine.len()));
+    lines.push(format!("TOC entries: {}", cache.toc.len()));
+    lines.push(format!(
+        "Cache: {}",
+        if status.hit { "hit" } else { "miss" }
+    ));
+    lines.push(format!("Cache path: {}", status.cache_path.display()));
+    lines.push(format!("Cache size: {} bytes", cache.source_size));
+
+    if !cache.toc.is_empty() {
+        lines.push("TOC preview:".to_string());
+        let mut preview = Vec::new();
+        collect_toc_preview_cache(&cache.toc, &mut preview, 8);
+        for line in preview {
+            lines.push(line);
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn collect_toc_preview_cache(entries: &[CacheTocEntry], out: &mut Vec<String>, limit: usize) {
+    for entry in entries.iter().take(limit) {
+        let indent = "  ".repeat(entry.level as usize);
+        let label = if entry.title.is_empty() {
+            "<untitled>"
+        } else {
+            entry.title.as_str()
+        };
+        out.push(format!("{indent}- {label}"));
+    }
+}
+
+fn filter_preview_text(input: &str) -> String {
+    let mut out = String::new();
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            out.push('\n');
+            continue;
+        }
+        if trimmed.starts_with("[Image:") {
+            continue;
+        }
+        out.push_str(trimmed);
+        out.push('\n');
+    }
+    out
 }
 
 fn parse_trimg(data: &[u8]) -> Result<ImageData, ImageError> {

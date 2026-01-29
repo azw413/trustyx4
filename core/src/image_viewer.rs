@@ -40,6 +40,12 @@ pub enum ImageError {
 pub trait ImageSource {
     fn refresh(&mut self, path: &[String]) -> Result<Vec<ImageEntry>, ImageError>;
     fn load(&mut self, path: &[String], entry: &ImageEntry) -> Result<ImageData, ImageError>;
+    fn epub_info(&mut self, _path: &[String], _entry: &ImageEntry) -> Option<String> {
+        None
+    }
+    fn epub_preview_text(&mut self, _path: &[String], _entry: &ImageEntry) -> Option<String> {
+        None
+    }
     fn sleep(&mut self) {}
     fn wake(&mut self) {}
     fn save_resume(&mut self, _name: Option<&str>) {}
