@@ -70,6 +70,36 @@ cargo run -p trusty-image -- convert input.png output.tri --debug \
 - For ONNX usage, the model must be `.onnx` (not `.pt`/`.safetensors`).
 - The ONNX export is fixed to 1x3x640x640 input.
 
+## Book Conversion
+
+The `trusty-book` tool converts EPUB into the pre-rendered `.trbk` format.
+It runs as a library-first crate with a simple CLI.
+
+### Examples
+Basic conversion with a single font and size:
+```
+cargo run -p trusty-book -- input.epub sdcard/MyBook.trbk \
+  --font /System/Library/Fonts/Supplemental/Arial.ttf \
+  --sizes 18
+```
+
+Multiple output sizes in one pass:
+```
+cargo run -p trusty-book -- input.epub sdcard/MyBook.trbk \
+  --font /System/Library/Fonts/Supplemental/Times\ New\ Roman.ttf \
+  --sizes 12,16,20
+```
+
+### Fonts and styles
+- The converter expects a base font (`--font`) in TTF/OTF format.
+- If bold/italic text is detected in the book, the converter will look for
+  matching font files using common naming conventions:
+  - `FontName Bold.ttf`
+  - `FontName Italic.ttf`
+  - `FontName Bold Italic.ttf`
+- If a style is referenced by the book but the matching font file is not found,
+  a warning is emitted and the base font is used instead.
+
 ## File Formats
 
 ### TRIM / TRI (mono images)
